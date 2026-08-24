@@ -4,6 +4,7 @@
 
 ![D LDC 1.41](https://img.shields.io/badge/D-LDC%201.41-8B0000)
 ![Dub](https://img.shields.io/badge/dub-library-8B0000)
+[![Hits](https://hits.dwyl.com/kevinpostal/ircfiber-common.svg)](https://hits.dwyl.com/kevinpostal/ircfiber-common)
 
 ## Why this matters for hiring
 
