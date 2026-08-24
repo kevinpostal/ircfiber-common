@@ -6,6 +6,8 @@
 ![Dub](https://img.shields.io/badge/dub-library-8B0000)
 [![Hits](https://hits.dwyl.com/kevinpostal/ircfiber-common.svg)](https://hits.dwyl.com/kevinpostal/ircfiber-common)
 
+<p align="center"><a href="https://skillicons.dev"><img src="https://skillicons.dev/icons?i=d,py&perline=4" alt="Skills" /></a></p>
+
 ## Why this matters for hiring
 
 At **National Services Group** and **Walmart** I owned shared `Python` packages that 6 brands/millions of users depended on. `common` is the same — `RedisKeys`, `NetworkStateSnapshot`, `ServerRegistry` — change it and both services must stay in sync.
