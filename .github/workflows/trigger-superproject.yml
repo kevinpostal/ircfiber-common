@@ -1,0 +1,28 @@
+name: Trigger superproject bump
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to superproject
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Trigger irc-fiber superproject to bump submodule
+          # Requires a PAT with repo scope stored as SUPERPROJECT_PAT
+          if [ -z "${{ secrets.SUPERPROJECT_PAT }}" ]; then
+            echo "No SUPERPROJECT_PAT — skipping dispatch (add as secret to enable auto-bump)"
+            exit 0
+          fi
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.SUPERPROJECT_PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/kevinpostal/irc-fiber/dispatches \
+            -d '{"event_type":"bump-common","client_payload":{"version":"'"$(grep -E '^version' dub.sdl | sed -E 's/.*"(.*)".*/\1/')"'","ref":"'"$GITHUB_REF"'","sha":"'"$GITHUB_SHA"'"}}'
+          echo "Dispatched bump-common for $(grep -E '^version' dub.sdl)"

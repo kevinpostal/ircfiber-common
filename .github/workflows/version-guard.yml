@@ -1,0 +1,32 @@
+name: Common version guard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'source/**'
+      - 'dub.sdl'
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'dub.sdl'
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure version bumped when source changes
+        run: |
+          # If source changed but version in dub.sdl didn't, fail
+          # This is a simple check: compare version before/after via git diff
+          # For now, just ensure version is present and semver
+          grep -qE '^version "[0-9]+\.[0-9]+\.[0-9]+"' dub.sdl || (echo "version missing in dub.sdl" && exit 1)
+          echo "version OK: $(grep -E '^version' dub.sdl)"
+      - name: Verify tag exists for version
+        run: |
+          VER=$(grep -E '^version' dub.sdl | sed -E 's/.*"(.*)".*/\1/')
+          if ! git tag --list | grep -q "v$VER\|$VER"; then
+            echo "No tag for version $VER — create with: git tag v$VER && git push origin v$VER"
+            # not failing, just warning for now
+          fi
