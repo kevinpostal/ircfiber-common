@@ -1,5 +1,10 @@
 name: Common version guard
 
+# This library ships as three byte-identical copies (this repo, site/common,
+# engine/common). Landing a source change without bumping the version leaves
+# the copies claiming one version with different content — the failure mode
+# that let db/user.d drift unnoticed. So: source changed => version bumped.
+
 on:
   push:
     branches: [main]
@@ -16,17 +21,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Ensure version bumped when source changes
+        with:
+          fetch-depth: 0
+
+      - name: Version is present and semver
         run: |
-          # If source changed but version in dub.sdl didn't, fail
-          # This is a simple check: compare version before/after via git diff
-          # For now, just ensure version is present and semver
-          grep -qE '^version "[0-9]+\.[0-9]+\.[0-9]+"' dub.sdl || (echo "version missing in dub.sdl" && exit 1)
-          echo "version OK: $(grep -E '^version' dub.sdl)"
-      - name: Verify tag exists for version
+          set -euo pipefail
+          grep -qE '^version "[0-9]+\.[0-9]+\.[0-9]+"' dub.sdl \
+            || { echo "::error file=dub.sdl::version missing or not semver"; exit 1; }
+          echo "version: $(sed -nE 's/^version "(.*)"/\1/p' dub.sdl)"
+
+      - name: Version bumped when source changes
+        if: github.event_name == 'pull_request'
         run: |
-          VER=$(grep -E '^version' dub.sdl | sed -E 's/.*"(.*)".*/\1/')
-          if ! git tag --list | grep -q "v$VER\|$VER"; then
-            echo "No tag for version $VER — create with: git tag v$VER && git push origin v$VER"
-            # not failing, just warning for now
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only "$base"...HEAD -- source | wc -l | tr -d ' ')
+          if [ "$changed" -eq 0 ]; then
+            echo "no source/ changes — nothing to bump"
+            exit 0
           fi
+          old=$(git show "$base:dub.sdl" | sed -nE 's/^version "(.*)"/\1/p')
+          new=$(sed -nE 's/^version "(.*)"/\1/p' dub.sdl)
+          echo "source/ files changed: $changed — version $old -> $new"
+          if [ "$old" = "$new" ]; then
+            echo "::error file=dub.sdl::source/ changed but version stayed $new — bump it, then re-sync the mirrors with site/scripts/sync-common.sh"
+            exit 1
+          fi
+
+      - name: Tag exists for this version
+        run: |
+          ver=$(sed -nE 's/^version "(.*)"/\1/p' dub.sdl)
+          git tag --list | grep -qx "common-v$ver" \
+            || echo "::warning file=dub.sdl::no tag for $ver — create with: git tag common-v$ver && git push origin common-v$ver"

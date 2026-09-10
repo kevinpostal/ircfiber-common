@@ -16,11 +16,11 @@ At **National Services Group** and **Walmart** I owned shared `Python` packages 
 * **Models:** `source/ircfiber/models/*` — `IRCEvent`, `Message`, `Network`, `User`, `IRCChannel`
 * **Storage:** `source/ircfiber/db/*` (Mongo), `source/ircfiber/storage/*` (Redis buffer/dedup), `source/ircfiber/irc/*` (`ServerRegistry`, `ConnectionServer`, `EngineJanitor`)
 
-Currently **duplicated inline** in `site/common` + `engine/common` (Option A) — simple, no `submodule` ceremony. Drift guard `site/scripts/check-common-drift.sh --fetch` fails CI on drift.
+Currently **duplicated inline** in `site/common` + `engine/common` (Option A) — simple, no `submodule` ceremony. Mirrors are synced by `site/scripts/sync-common.sh` and policed by `site/scripts/check-common-drift.sh --fetch` (fails CI on drift) plus `site/scripts/check-common-version.sh` (version + dep-string consistency).
 
 **Scale path:** Publish as versioned `dub` package:
 ```sdl
-dependency "irc-fiber-common" version="~>0.3.0"  # git URL, Tag common-v0.3.x → bump
+dependency "irc-fiber-common" version="~>0.3.1"  # git URL, Tag common-v0.3.x → bump
 ```
 Then `site`/`engine` depend via version, not copy.
 
