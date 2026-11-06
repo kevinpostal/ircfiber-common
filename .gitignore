@@ -1,4 +1,5 @@
 irc-fiber-common-test-unittest
+/*-test
 *.a
 *.o
 .dub/
