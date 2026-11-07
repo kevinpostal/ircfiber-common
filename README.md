@@ -26,6 +26,12 @@ Then `site`/`engine` depend via version, not copy.
 
 Part of [kevinpostal/irc-fiber](https://github.com/kevinpostal/irc-fiber) superproject — `git clone --recursive` gets it.
 
+## Reply and reaction history
+
+Redis scrollback retains `rp` (target message), `rx` (reaction add) and `ux` (reaction removal), including the `+draft/` aliases, on both event-write paths. The compact keys match Mongo history so reaction TAGMSGs survive noise filtering and replay; typing TAGMSGs remain excluded.
+
+Deploy the engine containing the updated shared writer. Existing Redis rows written without these fields cannot recover them by themselves; restore missing metadata from matching Mongo rows rather than clearing user history.
+
 ## Build
 
 ```bash
