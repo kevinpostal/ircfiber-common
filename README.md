@@ -15,6 +15,7 @@ At **National Services Group** and **Walmart** I owned shared `Python` packages 
 * **Contract:** `source/ircfiber/redis/protocol.d` — `RedisKeys`, `IRCCommand`, `ControlMessage`, `NetworkStateSnapshot`, `StateTTL`
 * **Models:** `source/ircfiber/models/*` — `IRCEvent`, `Message`, `Network`, `User`, `IRCChannel`
 * **Storage:** `source/ircfiber/db/*` (Mongo), `source/ircfiber/storage/*` (Redis buffer/dedup), `source/ircfiber/irc/*` (`ServerRegistry`, `ConnectionServer`, `EngineJanitor`)
+* **Outbound holder client:** `source/ircfiber/holder_client.d` — shared protocol-v1 client for the engine, Support and FiberEye; mirrored byte-for-byte in both consumers. HELLO's build identifier comes from `IRCFIBER_BUILD_SHORT` (default `dev`). The former engine-local module is removed, without a compatibility alias.
 
 Currently **duplicated inline** in `site/common` + `engine/common` (Option A) — simple, no `submodule` ceremony. Mirrors are synced by `site/scripts/sync-common.sh` and policed by `site/scripts/check-common-drift.sh --fetch` (fails CI on drift) plus `site/scripts/check-common-version.sh` (version + dep-string consistency).
 
