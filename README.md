@@ -33,6 +33,10 @@ Redis scrollback retains `rp` (target message), `rx` (reaction add) and `ux` (re
 
 Deploy the engine containing the updated shared writer. Existing Redis rows written without these fields cannot recover them by themselves; restore missing metadata from matching Mongo rows rather than clearing user history.
 
+## Bouncer history lookup
+
+`MessageRepository.ensureIndexes` provisions the `(networkId, channel, msgid, serverId, eid)` index for replay identity checks and exact history cursors. Bouncer attach resolves previously delivered message IDs before answering later history requests; scanning a network's entire event-ID range here can leave native clients waiting for minutes. Existing deployments can create this index online without deleting messages or restarting the bouncer.
+
 ## Build
 
 ```bash
