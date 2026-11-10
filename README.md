@@ -37,6 +37,24 @@ Deploy the engine containing the updated shared writer. Existing Redis rows writ
 
 `MessageRepository.ensureIndexes` provisions the `(networkId, channel, msgid, serverId, eid)` index for replay identity checks and exact history cursors. Bouncer attach resolves previously delivered message IDs before answering later history requests; scanning a network's entire event-ID range here can leave native clients waiting for minutes. Existing deployments can create this index online without deleting messages or restarting the bouncer.
 
+## Bounded runtime and coordinated maintenance
+
+Holder clients discover `inventory_v1` before using bounded, metadata-free
+inventory pages. Older holders retain the genuine streaming `LIST` fallback;
+only selected restoration entries retain their complete metadata. The pinned
+vibe-serialization patch is hash-checked by
+`scripts/apply-vibe-serialization-patches.sh` before consumer builds.
+
+`archive_protocol` defines durable archive control shared by the gateway and
+engine; buffer and Mongo history paths retain ordered event identity.
+Runtime memory/diagnostic helpers expose bounded operational evidence without
+requiring full session metadata in periodic scans.
+
+Canonical network mutations register a writer before Mongo dispatch and remove
+it only after an acknowledged completion. Coordinated holder maintenance excludes
+new network, assignment and routing writes. Ambiguous writes retain their token
+and block collection rather than pretending that no write is in flight.
+
 ## Build
 
 ```bash
