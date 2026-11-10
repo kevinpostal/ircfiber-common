@@ -50,10 +50,23 @@ engine; buffer and Mongo history paths retain ordered event identity.
 Runtime memory/diagnostic helpers expose bounded operational evidence without
 requiring full session metadata in periodic scans.
 
-Canonical network mutations register a writer before Mongo dispatch and remove
-it only after an acknowledged completion. Coordinated holder maintenance excludes
-new network, assignment and routing writes. Ambiguous writes retain their token
-and block collection rather than pretending that no write is in flight.
+Canonical network changes hold one noncopyable `NetworkWriter` across the whole
+logical operation: Mongo updates, assignment/configuration changes, control
+queues and their acknowledgements. `runNetworkWrite` accepts the existing
+`RedisStorage` or `RedisDatabase`; nested repository/control calls take the same
+writer rather than opening another connection or readmitting halfway through.
+The collector atomically requires no writers before installing exclusion.
+
+Every Mongo/Redis step must acknowledge completion before the scope can release
+its token. A caught lost acknowledgement remains uncertain and has no expiry.
+Constructor migrations, IPv6 reservation/index work and archive catalog CAS use
+the same gate. Ordinary messages, PONG, matching-owner lease renewal and unchanged
+runtime snapshots do not become configuration writes.
+Numeric acknowledgement fields accept only BSON int, long or double and use
+explicit numeric conversion, not type-strict `get!double`. In particular,
+Mongo's integer duplicate-key code `11000` is an acknowledged reservation
+collision that preserves the existing eight-attempt IID retry budget; malformed
+responses, concern errors and uncertain outcomes still retain the writer.
 
 ## Build
 
