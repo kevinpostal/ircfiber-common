@@ -70,6 +70,8 @@ responses, concern errors and uncertain outcomes still retain the writer.
 `NetworkRepository` defaults are thread-local because Redis clients belong to
 their event loop. Workers with a connected Redis client pass it explicitly;
 workers without one cannot dispatch coordinated writes.
+Signup activation accepts Mongo's acknowledged numeric `nModified` value in
+either integer or double form and still reports the transition only once.
 
 ## Build
 
