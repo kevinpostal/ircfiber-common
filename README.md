@@ -59,9 +59,19 @@ The collector atomically requires no writers before installing exclusion.
 
 Every Mongo/Redis step must acknowledge completion before the scope can release
 its token. A caught lost acknowledgement remains uncertain and has no expiry.
+Known validation/domain failures release their admitted scope when every
+dispatched step has already acknowledged completion; exceptional exits never
+clear an outstanding step or an explicitly retained uncertain effect.
 Constructor migrations, IPv6 reservation/index work and archive catalog CAS use
 the same gate. Ordinary messages, PONG, matching-owner lease renewal and unchanged
 runtime snapshots do not become configuration writes.
+
+`NetworkRepository` uses the caller's thread-owned Redis connection; its boot
+fallback is thread-local. Background workers pass their existing connection,
+never another event loop's socket. During exclusion, matching-owner leases
+remain persistent instead of regaining a TTL; new/replacement lease evidence
+still requires admission.
+
 Numeric acknowledgement fields accept only BSON int, long or double and use
 explicit numeric conversion, not type-strict `get!double`. In particular,
 Mongo's integer duplicate-key code `11000` is an acknowledged reservation
