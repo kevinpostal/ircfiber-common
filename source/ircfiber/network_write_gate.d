@@ -20,7 +20,7 @@ return {'admitted'}
 LUA";
 
 /// A typed, consumer-visible refusal, never a routing-policy failure.
-final class NetworkWriteUnavailableException : Exception {
+class NetworkWriteUnavailableException : Exception {
     immutable string code;
     this(string code = "network_maintenance") {
         super(code == "network_maintenance"
@@ -34,10 +34,10 @@ final class NetworkWriteUnavailableException : Exception {
 
 /// Preserve the server acknowledgement for typed storage consumers without
 /// exposing command contents in the public exception message.
-final class NetworkMutationException : Exception {
+final class NetworkMutationException : NetworkWriteUnavailableException {
     Bson reply;
-    this(string message, Bson reply) {
-        super(message);
+    this(Bson reply) {
+        super("network_write_incomplete");
         this.reply = reply;
     }
 }
@@ -121,13 +121,18 @@ T runNetworkWrite(T)(RedisDatabase db, scope T delegate(ref NetworkWriter) body)
 /// exception leaves this step outstanding even if the outer operation catches.
 T runNetworkRedisMutation(T)(ref NetworkWriter writer, scope T delegate(RedisDatabase) body) {
     writer.beginStep();
-    static if (is(T == void)) {
-        body(writer.db);
-        confirmRedisStep(writer);
-    } else {
-        auto result = body(writer.db);
-        confirmRedisStep(writer);
-        return result;
+    try {
+        static if (is(T == void)) {
+            body(writer.db);
+            confirmRedisStep(writer);
+        } else {
+            auto result = body(writer.db);
+            confirmRedisStep(writer);
+            return result;
+        }
+    } catch (NetworkWriteUnavailableException e) { throw e; }
+    catch (Exception) {
+        throw new NetworkWriteUnavailableException("network_write_incomplete");
     }
 }
 
@@ -197,11 +202,11 @@ private Bson runAdmittedNetworkMutation(ref NetworkWriter writer, Bson command, 
         return reply;
     }
     if (!cleanErrors || !numeric(reply["ok"]) || reply["ok"].to!double != 1.0)
-        throw new NetworkMutationException("Network mutation did not receive a confirmed Mongo acknowledgement", reply);
+        throw new NetworkMutationException(reply);
     if ((kind == MutationKind.update && (!nonnegativeCount(reply["n"]) || !nonnegativeCount(reply["nModified"])))
             || (kind == MutationKind.delete_ && !nonnegativeCount(reply["n"]))
             || (kind == MutationKind.reserve && reply["value"].type == Bson.Type.undefined))
-        throw new NetworkMutationException("Malformed network mutation completion acknowledgement", reply);
+        throw new NetworkMutationException(reply);
     --writer.unconfirmed;
     return reply;
 }

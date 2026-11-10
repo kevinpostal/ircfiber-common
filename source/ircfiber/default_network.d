@@ -209,6 +209,22 @@ NetworkConfig ensureDefaultFiberNetwork(
     ServerRegistry serverRegistry,
     bool deferConnect = false
 ) {
+    if (user.id == UUID.init || user.username.length == 0 || !isFiberEnabled(redis))
+        return NetworkConfig.init;
+    return runNetworkWrite!NetworkConfig(redis, (ref NetworkWriter writer) {
+        return ensureDefaultFiberNetwork(user, networkRepo, redis, serverRegistry, writer, deferConnect);
+    });
+}
+
+/// Reuse one admitted writer through provisioning, deduplication and activation.
+NetworkConfig ensureDefaultFiberNetwork(
+    User user,
+    NetworkRepository networkRepo,
+    RedisStorage redis,
+    ServerRegistry serverRegistry,
+    ref NetworkWriter writer,
+    bool deferConnect = false
+) {
     if (user.id == UUID.init || user.username.length == 0)
         return NetworkConfig.init;
 
@@ -226,31 +242,29 @@ NetworkConfig ensureDefaultFiberNetwork(
         if (cfg.host != DEFAULT_FIBER_HOST) continue;
         const selectedServer = requireDefaultFiberPlacement(cfg, redis, serverRegistry, networkRepo);
         const existingId = cfg.id;
-        return runNetworkWrite!NetworkConfig(redis, (ref NetworkWriter writer) {
-            auto current = networkRepo.findByIdWithIpv6Iid(existingId, writer);
-            // Deliberately parted defaults stay parted.
-            bool[string] have; foreach (c; current.autoJoinChannels) have[c] = true;
-            bool[string] parted; foreach (c; current.partedChannels) parted[c] = true;
-            string[] added;
-            foreach (ch; DEFAULT_FIBER_CHANNELS)
-                if (ch !in have && ch !in parted) { current.autoJoinChannels ~= ch; added ~= ch; }
-            if (added.length) {
-                networkRepo.save(current, user.id, writer);
-                current = networkRepo.findByIdWithIpv6Iid(current.id, writer);
-                const sid = serverRegistry.getServerForNetwork(current.id.toString());
-                if (sid.length && selectedServer.length
-                        && !networkMoveFenced(redis.getDb(), current.id.toString())) {
-                    requireRoutingUpgrade(redis.getDb(), sid);
-                    auto up = ControlMessage("updateConfig", current.id.toString(), "", current.toJson());
-                    up.timestampMs = Clock.currTime.toUnixTime!long * 1000;
-                    runNetworkRedisMutation!void(writer, (RedisDatabase db) {
-                        db.lpush(RedisKeys.control(sid), up.toJson().toString());
-                    });
-                }
-                logInfo("ensureDefaultFiberNetwork: topped up %s for user=%s", added, user.username);
+        auto current = networkRepo.findByIdWithIpv6Iid(existingId, writer);
+        // Deliberately parted defaults stay parted.
+        bool[string] have; foreach (c; current.autoJoinChannels) have[c] = true;
+        bool[string] parted; foreach (c; current.partedChannels) parted[c] = true;
+        string[] added;
+        foreach (ch; DEFAULT_FIBER_CHANNELS)
+            if (ch !in have && ch !in parted) { current.autoJoinChannels ~= ch; added ~= ch; }
+        if (added.length) {
+            networkRepo.save(current, user.id, writer);
+            current = networkRepo.findByIdWithIpv6Iid(current.id, writer);
+            const sid = serverRegistry.getServerForNetwork(current.id.toString());
+            if (sid.length && selectedServer.length
+                    && !networkMoveFenced(redis.getDb(), current.id.toString())) {
+                requireRoutingUpgrade(redis.getDb(), sid);
+                auto up = ControlMessage("updateConfig", current.id.toString(), "", current.toJson());
+                up.timestampMs = Clock.currTime.toUnixTime!long * 1000;
+                runNetworkRedisMutation!void(writer, (RedisDatabase db) {
+                    db.lpush(RedisKeys.control(sid), up.toJson().toString());
+                });
             }
-            return current;
-        });
+            logInfo("ensureDefaultFiberNetwork: topped up %s for user=%s", added, user.username);
+        }
+        return current;
     }
 
     auto cfg = buildDefaultFiberNetwork(user);
@@ -259,27 +273,25 @@ NetworkConfig ensureDefaultFiberNetwork(
     cfg.defaultAvatarUrl = userRepo.getAvatarUrl(user.id);
     cfg.profileMetadata = userRepo.getProfile(user.id);
     requireDefaultFiberPlacement(cfg, redis, serverRegistry, networkRepo);
-    return runNetworkWrite!NetworkConfig(redis, (ref NetworkWriter writer) {
-        networkRepo.save(cfg, user.id, writer);
-        cfg = networkRepo.findByIdWithIpv6Iid(cfg.id, writer);
+    networkRepo.save(cfg, user.id, writer);
+    cfg = networkRepo.findByIdWithIpv6Iid(cfg.id, writer);
 
-        // Concurrent logins retain the same deterministic duplicate survivor.
-        // A failed canonical deletion is not swallowed before activation.
-        auto after = networkRepo.findByUserId(user.id);
-        NetworkConfig[] dups;
-        foreach (c; after) if (c.host == DEFAULT_FIBER_HOST) dups ~= c;
-        if (dups.length > 1) {
-            import std.algorithm : sort;
-            sort!((a,b)=> a.id.toString() < b.id.toString())(dups);
-            const keep = dups[0];
-            foreach (i; 1 .. dups.length) networkRepo.deleteById(dups[i].id, writer);
-            if (keep.id != cfg.id) return networkRepo.findByIdWithIpv6Iid(keep.id, writer);
-        }
+    // Concurrent logins retain the same deterministic duplicate survivor.
+    // A failed canonical deletion is not swallowed before activation.
+    auto after = networkRepo.findByUserId(user.id);
+    NetworkConfig[] dups;
+    foreach (c; after) if (c.host == DEFAULT_FIBER_HOST) dups ~= c;
+    if (dups.length > 1) {
+        import std.algorithm : sort;
+        sort!((a,b)=> a.id.toString() < b.id.toString())(dups);
+        const keep = dups[0];
+        foreach (i; 1 .. dups.length) networkRepo.deleteById(dups[i].id, writer);
+        if (keep.id != cfg.id) return networkRepo.findByIdWithIpv6Iid(keep.id, writer);
+    }
 
-        if (!cfg.servicesProvisioningPending)
-            activateDefaultFiberNetwork(cfg, user.id, redis, serverRegistry, writer, networkRepo);
-        return cfg;
-    });
+    if (!cfg.servicesProvisioningPending)
+        activateDefaultFiberNetwork(cfg, user.id, redis, serverRegistry, writer, networkRepo);
+    return cfg;
 }
 
 /// Shared policy-tier placement is checked before any provisioning write.
