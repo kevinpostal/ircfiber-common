@@ -75,8 +75,9 @@ still requires admission.
 Numeric acknowledgement fields accept only BSON int, long or double and use
 explicit numeric conversion, not type-strict `get!double`. In particular,
 Mongo's integer duplicate-key code `11000` is an acknowledged reservation
-collision that preserves the existing eight-attempt IID retry budget; malformed
-responses, concern errors and uncertain outcomes still retain the writer.
+collision that preserves the existing eight-attempt IID retry budget. Signup
+activation likewise accepts numeric `nModified` counts and remains idempotent.
+Malformed responses, concern errors and uncertain outcomes still retain the writer.
 
 ## Build
 
