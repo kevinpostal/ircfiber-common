@@ -18,6 +18,7 @@ import core.time : Duration, seconds, minutes, MonoTime;
 
 import ircfiber.redis.protocol : RedisKeys, StateTTL;
 import ircfiber.storage.redis : RedisStorage;
+import ircfiber.errors : captureException, FailureEpisode;
 
 private string makeActor() {
     auto pid = getpid();
@@ -186,6 +187,8 @@ final class EngineJanitor {
         long   totalReaped;
         long   lastDurationMs;
         string[] lastCycleReaped;
+        Throwable cycleFailure;
+        bool cycleCompleted;
     }
 
     /// Constructs a janitor bound to the given Redis storage.
@@ -206,6 +209,7 @@ final class EngineJanitor {
         runTask(() nothrow {
             try runJanitorLoop();
             catch (Exception e) {
+                captureException!("engine-janitor", "terminal")(e);
                 logError("EngineJanitor loop crashed: %s", e.msg);
             }
         });
@@ -214,6 +218,8 @@ final class EngineJanitor {
     /// Run one cycle synchronously. Returns count of servers reaped.
     /// Used by tests + admin manual-trigger endpoint.
     long runOnce() {
+        cycleFailure = null;
+        cycleCompleted = false;
         const startMono = MonoTime.currTime;
         long reaped = 0;
         lastCycleReaped.length = 0;
@@ -229,6 +235,7 @@ final class EngineJanitor {
             const got = db.get(RedisKeys.janitorLock());
             gotLock = (got == lockVal);
         } catch (Exception e) {
+            cycleFailure = e;
             logWarn("EngineJanitor: SET NX failed: %s — skipping cycle", e.msg);
             return 0;
         }
@@ -241,6 +248,7 @@ final class EngineJanitor {
             released = true;
             try db.del(RedisKeys.janitorLock());
             catch (Exception e) {
+                if (cycleFailure is null) cycleFailure = e;
                 logWarn("EngineJanitor: failed to release lock: %s", e.msg);
             }
         }
@@ -251,6 +259,7 @@ final class EngineJanitor {
             auto reply = db.smembers(RedisKeys.serverList());
             foreach (m; reply) serverIds ~= m.idup;
         } catch (Exception e) {
+            if (cycleFailure is null) cycleFailure = e;
             logWarn("EngineJanitor: SMEMBERS failed: %s", e.msg);
             return 0;
         }
@@ -259,6 +268,7 @@ final class EngineJanitor {
             try {
                 if (db.exists(RedisKeys.server(sid)) > 0) continue;
             } catch (Exception e) {
+                if (cycleFailure is null) cycleFailure = e;
                 logWarn("EngineJanitor: EXISTS check failed for %s: %s", sid, e.msg);
                 continue;
             }
@@ -297,6 +307,7 @@ final class EngineJanitor {
                     if (cursor == "0") break;
                     yield();
                 } catch (Exception e) {
+                    if (cycleFailure is null) cycleFailure = e;
                     logWarn("EngineJanitor: SCAN batch failed for %s: %s", sid, e.msg);
                     break;
                 }
@@ -337,6 +348,7 @@ final class EngineJanitor {
                         sid, totalDeleted);
                 }
             } catch (Exception e) {
+                if (cycleFailure is null) cycleFailure = e;
                 logWarn("EngineJanitor: finalize failed for %s: %s", sid, e.msg);
             }
         }
@@ -344,6 +356,7 @@ final class EngineJanitor {
         totalCycles++;
         totalReaped += reaped;
         lastDurationMs = (MonoTime.currTime - startMono).total!"msecs";
+        cycleCompleted = true;
         return reaped;
     }
 
@@ -471,13 +484,17 @@ final class EngineJanitor {
             actor, intervalSeconds, lockTtlSeconds);
         try sleep(30.seconds); catch (Exception) return;
         int consecutiveFailures = 0;
+        FailureEpisode!("engine-janitor", "sweep") episode;
         while (true) {
             try {
                 auto n = runOnce();
+                if (cycleFailure !is null) episode.failure(cycleFailure);
+                else if (cycleCompleted) episode.success();
                 if (n > 0)
                     logInfo("EngineJanitor: reaped %d orphan(s) this cycle", n);
                 consecutiveFailures = 0;
             } catch (Exception e) {
+                episode.failure(e);
                 consecutiveFailures++;
                 logWarn("EngineJanitor: error (%d/%d): %s — skipping cycle",
                     consecutiveFailures, 5, e.msg);
