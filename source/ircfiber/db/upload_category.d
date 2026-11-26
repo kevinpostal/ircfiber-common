@@ -252,6 +252,7 @@ unittest {
     import ircfiber.db.mongo : AppMongoConnection;
     import std.uuid : randomUUID;
     import vibe.db.mongo.cursor;
+    import vibe.db.mongo.collection : AggregateOptions;
     if (!connectIsolatedTestMongo("upload_category parity")) return;
     auto collection = AppMongoConnection.getDb()["upload_category_test"];
     const id = randomUUID().toString();
@@ -283,7 +284,7 @@ unittest {
         "local": uploadLocalExpression(),
     ])])];
     size_t seen;
-    foreach (doc; collection.aggregate!Bson(pipeline)) {
+    foreach (doc; collection.aggregate!Bson(pipeline, AggregateOptions.init)) {
         const example = examples[doc["index"].get!int];
         assert(doc["category"].get!string == uploadCategory(example.mime, example.original, example.url, example.display));
         assert(doc["original"].get!string == uploadOriginalName(example.original, example.url, example.display));
