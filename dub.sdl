@@ -34,6 +34,15 @@ configuration "contract-test" {
     targetType "library"
     excludedSourceFiles "source/ircfiber/runtime_diagnostic.d"
 }
+
+// Runs only the explicitly allowlisted common contracts, never DB unittests.
+configuration "integration-contract-test" {
+    targetType "executable"
+    targetName "integration-contract-test"
+    mainSourceFile "tests/integration_contract_test.d"
+    excludedSourceFiles "source/ircfiber/runtime_diagnostic.d"
+    versions "VibeUseFibers" "CommonIntegrationTest"
+}
 configuration "unittest" {
     targetType "library"
     versions "VibeUseFibers"

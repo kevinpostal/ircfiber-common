@@ -552,3 +552,44 @@ unittest {
     atomicStore(state.done, false);
     waitErrorReport(ErrorReport(state, MonoTime.currTime - 1.msecs));
 }
+
+version (CommonIntegrationTest) unittest {
+    import std.file : tempDir, mkdir, write, remove, rmdir;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+    import std.array : replicate;
+    const directory = buildPath(tempDir(), "ircfiber-ingest-" ~ randomUUID().toString());
+    mkdir(directory);
+    scope (exit) rmdir(directory);
+    const path = buildPath(directory, "dsn");
+    scope (exit) { import std.file : exists; if (exists(path)) remove(path); }
+    enum dsn = "https://private-key@errors.invalid/42";
+    assert(readIngestDsnFile(path) == "", "missing authoritative file fails closed");
+    assert(readIngestDsnFile(directory) == "", "directories are not credentials");
+    foreach (suffix; ["", "\n", "\r\n"]) {
+        write(path, dsn ~ suffix);
+        assert(readIngestDsnFile(path) == dsn);
+    }
+    foreach (contents; ["", dsn ~ "\n\n", " " ~ dsn, dsn ~ "\0", dsn ~ "\r",
+            "x".replicate(2049), "x".replicate(2051)]) {
+        write(path, contents);
+        configureErrorReporting(true, readIngestDsnFile(path), "test", "1", "test");
+        assert(!isErrorReportingEnabled(), "unusable file must not rearm old credentials");
+    }
+    configureErrorReporting(false, "", "test", "1", "test");
+
+    FailureEpisode!("engine-janitor", "sweep") scheduled;
+    FailureEpisode!("engine-janitor", "sweep") independent;
+    auto error = new Exception("PRIVATE_CHAT_CREDENTIAL_MARKER");
+    assert(!scheduled.failed && !independent.failed);
+    scheduled.failure(error);
+    assert(scheduled.failed && !independent.failed, "episodes belong to individual loops");
+    scheduled.failure(error);
+    assert(scheduled.failed, "repeat failures remain latched even when reporting is disabled");
+    independent.success();
+    assert(scheduled.failed, "another invocation cannot recover the scheduled loop");
+    scheduled.success();
+    assert(!scheduled.failed, "only a healthy completed round rearms the episode");
+    scheduled.failure(error);
+    assert(scheduled.failed);
+}

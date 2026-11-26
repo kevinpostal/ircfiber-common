@@ -12,6 +12,96 @@ import vibe.db.mongo.mongo : MongoDatabase;
 import ircfiber.db.message_search;
 import ircfiber.models.network : normalizeChannelName;
 
+version (CommonIntegrationTest) unittest {
+    // Only the read boundary is replaced. The production graph traversal,
+    // identity validation, limits and no-replay resolver all execute unchanged.
+    alias Repo = HistorySuppressionRepository;
+    auto repo = new Repo(MongoDatabase.init);
+    Bson[string] documents;
+    bool[string] requested;
+    repo.fixtureReadIds = (string[] ids) {
+        Bson[] result;
+        foreach (id; ids) {
+            requested[id] = true;
+            if (auto doc = id in documents) result ~= *doc;
+        }
+        return result;
+    };
+    SearchRow base(string id, string channel, string alias_) {
+        SearchRow row;
+        row.rowId = id;
+        row.networkId = "network";
+        row.channel = channel;
+        row.t = 100;
+        row.eid = 10;
+        row.hasEid = true;
+        row.classification.kind = SearchKind.message;
+        row.classification.aliases = [alias_];
+        return row;
+    }
+    auto a = base("row-a", "#a", "alias-a");
+    auto b = base("row-b", "#b", "alias-b");
+    string[string] servers = [a.rowId: "engine", b.rowId: "engine"];
+    auto result = repo.suppressedRows([a, b], servers);
+    assert(!result.length);
+    assert(Repo.markKey("network", "#a", "alias-a") in requested);
+    assert(Repo.markKey("network", "#b", "alias-b") in requested);
+    assert(Repo.markKey("network", "#a", "alias-b") !in requested,
+        "same-network siblings must not request each other's marks");
+    assert(Repo.markKey("network", "#b", "alias-a") !in requested);
+
+    auto scope_ = Repo.scopeIdentity("network", "#a");
+    scope_["_id"] = Bson(Repo.scopeKey("network", "#a"));
+    scope_["incoming"] = Bson(["rename": Bson(["serverId": Bson("engine"),
+        "channel": Bson("#old"), "eid": Bson(20L), "t": Bson(200L)])]);
+    documents[Repo.scopeKey("network", "#a")] = scope_;
+    auto update = Repo.markUpdate(a, "engine", "alias-a", null);
+    auto mark = update["u"]["$setOnInsert"];
+    mark["channel"] = Bson("#old");
+    mark["_id"] = Bson(Repo.markKey("network", "#old", "alias-a"));
+    mark["witnesses"] = Bson(["engine": Bson(["serverId": Bson("engine"),
+        "loEid": Bson(10L), "hiEid": Bson(10L), "loT": Bson(long.max), "hiT": Bson(-1L)])]);
+    documents[Repo.markKey("network", "#old", "alias-a")] = mark;
+    requested = null;
+    result = repo.suppressedRows([a, b], servers);
+    assert(a.rowId in result, "incoming rename witnesses must prevent old-body replay");
+    assert(b.rowId !in result, "sibling reuse is not a rename witness");
+    assert(Repo.markKey("network", "#old", "alias-a") in requested);
+    assert(Repo.markKey("network", "#old", "alias-b") !in requested);
+
+    auto reused = a;
+    reused.channel = "#old";
+    reused.eid = 21;
+    reused.t = 201;
+    auto retired = Repo.scopeIdentity("network", "#old");
+    retired["_id"] = Bson(Repo.scopeKey("network", "#old"));
+    retired["retired"] = Bson(["rename": Bson(["serverId": Bson("engine"),
+        "channel": Bson("#a"), "eid": Bson(20L), "t": Bson(200L)])]);
+    documents[Repo.scopeKey("network", "#old")] = retired;
+    assert(!repo.suppressedRows([reused], servers).length,
+        "new reuse of the retired old scope must not inherit its renamed prefix");
+    auto corrupt = mark;
+    corrupt["kind"] = Bson("untrusted");
+    documents[Repo.markKey("network", "#old", "alias-a")] = corrupt;
+    bool rejected;
+    try repo.suppressedRows([a], servers);
+    catch (Exception) rejected = true;
+    assert(rejected, "malformed suppression evidence must fail closed, never reveal the body");
+
+    // 101 unrelated scopes used to produce a 101*101 cross product, exceeding
+    // the 10,000-key budget despite having just 101 relevant marks.
+    documents = null;
+    requested = null;
+    SearchRow[] many;
+    foreach (i; 0 .. 101) {
+        auto row = base("row-" ~ i.to!string, "#scope-" ~ i.to!string, "alias-" ~ i.to!string);
+        many ~= row;
+        servers[row.rowId] = "engine";
+    }
+    assert(!repo.suppressedRows(many, servers).length);
+    assert(requested.length == 202, "one scope and one relevant mark per base");
+}
+
 /// No message bodies, nicknames, edit text, or redaction reasons belong here.
 /// Alias marks retain only ranges of witness coordinates per original engine.
 /// Ranges may over-suppress gaps, but must never reconstruct a previous body.
@@ -24,6 +114,11 @@ final class HistorySuppressionRepository {
     private enum maxKeys = 10_000;
     private enum maxScopes = 256;
     private enum maxBytes = 32 * 1024 * 1024;
+
+    // Read-only BSON fixtures exercise the real lineage resolver without Mongo.
+    // Neither this field nor this transport branch exists in the library build.
+    version (CommonIntegrationTest)
+        private Bson[] delegate(string[] ids) fixtureReadIds;
 
     this(MongoDatabase db) { database = db; }
 
@@ -441,6 +536,10 @@ final class HistorySuppressionRepository {
     }
     private Bson[] readIds(string[] ids, long timeMs) {
         require(ids.length <= maxKeys);
+        version (CommonIntegrationTest) {
+            assert(fixtureReadIds !is null, "integration tests must not contact Mongo");
+            return fixtureReadIds(ids);
+        }
         Bson[] result;
         for (size_t offset; offset < ids.length; offset += pageSize)
             result ~= find(collection, Bson(["_id": Bson(["$in": serializeToBson(ids[offset .. min(ids.length, offset + pageSize)])])]),

@@ -1326,6 +1326,19 @@ unittest {
     assert(threw);
 }
 
+version (CommonIntegrationTest) unittest {
+    // The common library no longer terminates a process behind its owner.
+    // Owners can report/wait once and preserve the original restart status.
+    foreach (code; [75, 78]) {
+        Exception failure = new HolderStartupException("fixed startup label", code);
+        auto startup = cast(HolderStartupException) failure;
+        assert(startup !is null && startup.exitCode == code);
+        assert(startup.msg == "fixed startup label");
+        assert(cast(HolderUnavailableException) failure is null,
+            "terminal boot failures must not enter transient control retries");
+    }
+}
+
 @("splitStatusLine and expectOk")
 unittest {
     string verb; Json payload;
